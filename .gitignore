@@ -1,0 +1,4 @@
+.venv/
+.simcse-upstream-git/
+.DS_Store
+__pycache__/
