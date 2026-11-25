@@ -1,4 +1,7 @@
-transformers==4.2.1
+transformers==5.20.2
+accelerate
+matplotlib
+ipykernel
 scipy
 datasets
 pandas

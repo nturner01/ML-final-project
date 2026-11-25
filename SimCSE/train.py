@@ -33,7 +33,6 @@ from transformers import (
 from transformers.tokenization_utils_base import BatchEncoding, PaddingStrategy, PreTrainedTokenizerBase
 from transformers.trainer_utils import is_main_process
 from transformers.data.data_collator import DataCollatorForLanguageModeling
-from transformers.file_utils import cached_property, torch_required, is_torch_available, is_torch_tpu_available
 from simcse.models import RobertaForCL, BertForCL
 from simcse.trainers import CLTrainer
 
@@ -194,54 +193,10 @@ class OurTrainingArguments(TrainingArguments):
         default=False,
         metadata={"help": "Evaluate transfer task dev sets (in validation)."}
     )
-
-    @cached_property
-    @torch_required
-    def _setup_devices(self) -> "torch.device":
-        logger.info("PyTorch: setting up devices")
-        if self.no_cuda:
-            device = torch.device("cpu")
-            self._n_gpu = 0
-        elif is_torch_tpu_available():
-            import torch_xla.core.xla_model as xm
-            device = xm.xla_device()
-            self._n_gpu = 0
-        elif self.local_rank == -1:
-            # if n_gpu is > 1 we'll use nn.DataParallel.
-            # If you only want to use a specific subset of GPUs use `CUDA_VISIBLE_DEVICES=0`
-            # Explicitly set CUDA to the first (index 0) CUDA device, otherwise `set_device` will
-            # trigger an error that a device index is missing. Index 0 takes into account the
-            # GPUs available in the environment, so `CUDA_VISIBLE_DEVICES=1,2` with `cuda:0`
-            # will use the first GPU in that env, i.e. GPU#1
-            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            # Sometimes the line in the postinit has not been run before we end up here, so just checking we're not at
-            # the default value.
-            self._n_gpu = torch.cuda.device_count()
-        else:
-            # Here, we'll use torch.distributed.
-            # Initializes the distributed backend which will take care of synchronizing nodes/GPUs
-            #
-            # deepspeed performs its own DDP internally, and requires the program to be started with:
-            # deepspeed  ./program.py
-            # rather than:
-            # python -m torch.distributed.launch --nproc_per_node=2 ./program.py
-            if self.deepspeed:
-                from .integrations import is_deepspeed_available
-
-                if not is_deepspeed_available():
-                    raise ImportError("--deepspeed requires deepspeed: `pip install deepspeed`.")
-                import deepspeed
-
-                deepspeed.init_distributed()
-            else:
-                torch.distributed.init_process_group(backend="nccl")
-            device = torch.device("cuda", self.local_rank)
-            self._n_gpu = 1
-
-        if device.type == "cuda":
-            torch.cuda.set_device(device)
-
-        return device
+    overwrite_output_dir: bool = field(
+        default=False,
+        metadata={"help": "Overwrite the content of the output directory."}
+    )
 
 
 def main():
@@ -321,7 +276,7 @@ def main():
     config_kwargs = {
         "cache_dir": model_args.cache_dir,
         "revision": model_args.model_revision,
-        "use_auth_token": True if model_args.use_auth_token else None,
+        "token": True if model_args.use_auth_token else None,
     }
     if model_args.config_name:
         config = AutoConfig.from_pretrained(model_args.config_name, **config_kwargs)
@@ -335,7 +290,7 @@ def main():
         "cache_dir": model_args.cache_dir,
         "use_fast": model_args.use_fast_tokenizer,
         "revision": model_args.model_revision,
-        "use_auth_token": True if model_args.use_auth_token else None,
+        "token": True if model_args.use_auth_token else None,
     }
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, **tokenizer_kwargs)
@@ -355,7 +310,7 @@ def main():
                 config=config,
                 cache_dir=model_args.cache_dir,
                 revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
+                token=True if model_args.use_auth_token else None,
                 model_args=model_args                  
             )
         elif 'bert' in model_args.model_name_or_path:
@@ -365,7 +320,7 @@ def main():
                 config=config,
                 cache_dir=model_args.cache_dir,
                 revision=model_args.model_revision,
-                use_auth_token=True if model_args.use_auth_token else None,
+                token=True if model_args.use_auth_token else None,
                 model_args=model_args
             )
             if model_args.do_mlm:
@@ -535,7 +490,8 @@ def main():
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
-        tokenizer=tokenizer,
+        eval_dataset=["unused"], 
+        processing_class=tokenizer,
         data_collator=data_collator,
     )
     trainer.model_args = model_args
@@ -547,7 +503,7 @@ def main():
             if (model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path))
             else None
         )
-        train_result = trainer.train(model_path=model_path)
+        train_result = trainer.train()
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
@@ -565,7 +521,8 @@ def main():
     results = {}
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
-        results = trainer.evaluate(eval_senteval_transfer=True)
+        # SentEval's transfer-task classifiers are hard-coded to CUDA, so skip them on Mac
+        results = trainer.evaluate(eval_senteval_transfer=torch.cuda.is_available())
 
         output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
         if trainer.is_world_process_zero():

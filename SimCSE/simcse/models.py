@@ -92,7 +92,10 @@ def cl_init(cls, config):
     if cls.model_args.pooler_type == "cls":
         cls.mlp = MLPLayer(config)
     cls.sim = Similarity(temp=cls.model_args.temp)
-    cls.init_weights()
+    if hasattr(cls, "post_init"):
+        cls.post_init()
+    else:
+        cls.init_weights()
 
 def cl_forward(cls,
     encoder,

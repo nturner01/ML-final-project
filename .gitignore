@@ -2,3 +2,7 @@
 .simcse-upstream-git/
 .DS_Store
 __pycache__/
+
+# source paper and project instructions
+/2104.08821v4.pdf
+/Final_Project_Report_Requirements.pdf
