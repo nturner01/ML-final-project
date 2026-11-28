@@ -132,6 +132,4 @@ dmypy.json
 .vscode
 data/*
 !data/download_*.sh
-result
-.venv-cu11
-wandb
+result/*/

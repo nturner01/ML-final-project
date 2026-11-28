@@ -7,6 +7,5 @@ datasets
 pandas
 scikit-learn
 prettytable
-gradio
 torch
 setuptools
